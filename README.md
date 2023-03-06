@@ -163,7 +163,7 @@ ezkl -K=20 --bits=16 aggregate --app-logrows=17 --transcript=evm -M ./examples/o
 
 ```bash
 # Generate verifier code -> create the EVM verifier code 
-ezkl -K=17 --bits=16 create-evm-verifier-aggr --deployment-code-path aggr_1l_relu.code --params-path=kzg.params --vk-path aggr_1l_relu.vk
+ezkl -K=20 --bits=16 create-evm-verifier-aggr --deployment-code-path aggr_1l_relu.code --params-path=kzg.params --vk-path aggr_1l_relu.vk
 ```
 
 ```bash

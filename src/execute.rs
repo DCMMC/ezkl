@@ -262,18 +262,32 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             params_path,
             deployment_code_path,
             vk_path,
+            ref sol_code_path,
         } => {
-            let params: ParamsKZG<Bn256> = load_params_kzg(params_path)?;
+            let mut params: ParamsKZG<Bn256> = load_params_kzg(params_path)?;
+            if cli.args.logrows < params.k() {
+                params.downsize(cli.args.logrows);
+            }
 
             let agg_vk = load_vk::<KZGCommitmentScheme<Bn256>, Fr, AggregationCircuit>(vk_path)?;
 
-            let deployment_code = gen_aggregation_evm_verifier(
+            let (deployment_code, yul_code) = gen_aggregation_evm_verifier(
                 &params,
                 &agg_vk,
                 AggregationCircuit::num_instance(),
                 AggregationCircuit::accumulator_indices(),
             )?;
             deployment_code.save(deployment_code_path.as_ref().unwrap())?;
+
+            if sol_code_path.is_some() {
+                let mut f = File::create(sol_code_path.as_ref().unwrap())?;
+                let _ = f.write(yul_code.as_bytes());
+
+                let output = fix_verifier_sol(sol_code_path.as_ref().unwrap().clone())?;
+
+                let mut f = File::create(sol_code_path.as_ref().unwrap())?;
+                let _ = f.write(output.as_bytes());
+            }
         }
         Commands::Prove {
             ref data,

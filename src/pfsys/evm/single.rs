@@ -14,8 +14,8 @@ use thiserror::Error;
 type PlonkVerifier = verifier::plonk::PlonkVerifier<KzgAs<Bn256, Gwc19>>;
 
 #[derive(Error, Debug)]
-/// Errors related to simple evm verifier generation
-pub enum SimpleError {
+/// Errors related to evm verifier generation
+pub enum SingleError {
     /// proof read errors
     #[error("Failed to read proof")]
     ProofRead,
@@ -29,7 +29,7 @@ pub fn gen_evm_verifier(
     params: &ParamsKZG<Bn256>,
     vk: &VerifyingKey<G1Affine>,
     num_instance: Vec<usize>,
-) -> Result<(DeploymentCode, String), SimpleError> {
+) -> Result<(DeploymentCode, String), SingleError> {
     let protocol = compile(
         params,
         vk,
@@ -43,13 +43,16 @@ pub fn gen_evm_verifier(
 
     let instances = transcript.load_instances(num_instance);
     let proof = PlonkVerifier::read_proof(&vk, &protocol, &instances, &mut transcript)
-        .map_err(|_| SimpleError::ProofRead)?;
+        .map_err(|_| SingleError::ProofRead)?;
     PlonkVerifier::verify(&vk, &protocol, &instances, &proof)
-        .map_err(|_| SimpleError::ProofVerify)?;
+        .map_err(|_| SingleError::ProofVerify)?;
 
     let yul_code = &loader.yul_code();
 
-    Ok((DeploymentCode {
-        code: evm::compile_yul(yul_code),
-    }, yul_code.clone()))
+    Ok((
+        DeploymentCode {
+            code: evm::compile_yul(yul_code),
+        },
+        yul_code.clone(),
+    ))
 }

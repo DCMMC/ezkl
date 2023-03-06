@@ -167,7 +167,7 @@ jobs:
           components: rustfmt, clippy
       - name: Install solc
         run: (hash svm 2>/dev/null || cargo install svm-rs) && svm install 0.8.17 && solc --version
-      - name: KZG prove and verify aggr tests
+      - name: KZG prove and verify aggr tests (EVM)
         run: cargo test --release --verbose tests_evm::kzg_evm_aggr_prove_and_verify_ -- --include-ignored
 
   examples:

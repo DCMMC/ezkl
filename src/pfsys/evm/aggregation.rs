@@ -317,7 +317,7 @@ pub fn gen_aggregation_evm_verifier(
     vk: &VerifyingKey<G1Affine>,
     num_instance: Vec<usize>,
     accumulator_indices: Vec<(usize, usize)>,
-) -> Result<DeploymentCode, AggregationError> {
+) -> Result<(DeploymentCode, String), AggregationError> {
     let protocol = compile(
         params,
         vk,
@@ -337,7 +337,11 @@ pub fn gen_aggregation_evm_verifier(
     PlonkVerifier::verify(&vk, &protocol, &instances, &proof)
         .map_err(|_| AggregationError::ProofVerify)?;
 
-    Ok(DeploymentCode {
-        code: evm::compile_yul(&loader.yul_code()),
-    })
+    let yul_code = &loader.yul_code();
+    Ok((
+        DeploymentCode {
+            code: evm::compile_yul(yul_code),
+        },
+        yul_code.clone(),
+    ))
 }

@@ -286,7 +286,6 @@ pub enum Commands {
         /// The path to output the Solidity code
         #[arg(long)]
         sol_code_path: Option<PathBuf>,
-        // todo, optionally allow supplying proving key
     },
 
     /// Creates an EVM verifier for an aggregate proof
@@ -299,9 +298,11 @@ pub enum Commands {
         #[arg(long)]
         vk_path: PathBuf,
         /// The path to output to the desired verification code
-        #[arg(long, required_if_eq("transcript", " "))]
+        #[arg(long)]
         deployment_code_path: Option<PathBuf>,
-        // todo, optionally allow supplying proving key
+        /// The path to output the Solidity code (optional) supercedes deployment_code_path in priority
+        #[arg(long)]
+        sol_code_path: Option<PathBuf>,
     },
 
     /// Deploys an EVM verifier
@@ -399,7 +400,7 @@ pub enum Commands {
         #[arg(long)]
         deployment_code_path: PathBuf,
         /// The path to the Solidity code
-        #[arg(long, required_if_eq("transcript", "evm"))]
+        #[arg(long)]
         sol_code_path: Option<PathBuf>,
     },
 
