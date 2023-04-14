@@ -316,7 +316,7 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             let deployment_code = gen_aggregation_evm_verifier(
                 &params,
                 &agg_vk,
-                AggregationCircuit::num_instance(),
+                vec![4 * 4],
                 AggregationCircuit::accumulator_indices(),
             )?;
             deployment_code.save(deployment_code_path.as_ref().unwrap())?;

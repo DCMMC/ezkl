@@ -1,5 +1,6 @@
 use crate::pfsys::evm::DeploymentCode;
 use crate::pfsys::{Snark, SnarkWitness};
+use halo2_proofs::circuit::AssignedCell;
 use halo2_proofs::plonk::{self, VerifyingKey};
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
@@ -16,8 +17,9 @@ use halo2_wrong_ecc::{
 };
 use halo2curves::bn256::{Bn256, Fq, Fr, G1Affine};
 use itertools::Itertools;
-use log::trace;
+use log::{trace, debug};
 use rand::rngs::OsRng;
+use snark_verifier::loader::halo2::EccInstructions;
 use snark_verifier::{
     loader::evm::{self, EvmLoader},
     system::halo2::transcript::evm::EvmTranscript,
@@ -39,6 +41,7 @@ use snark_verifier::{
     util::arithmetic::{fe_to_limbs, FieldExt},
     verifier::{self, SnarkVerifier},
 };
+use std::io::Read;
 use std::rc::Rc;
 use thiserror::Error;
 
@@ -57,6 +60,8 @@ const R_P: usize = 60;
 type Svk = KzgSuccinctVerifyingKey<G1Affine>;
 type BaseFieldEccChip =
     snark_verifier::loader::halo2::halo2_wrong_ecc::BaseFieldEccChip<G1Affine, LIMBS, BITS>;
+type BaseFieldEccAssignedScalar<'a> = <BaseFieldEccChip as EccInstructions<'a, G1Affine>>::AssignedScalar;
+
 /// The loader type used in the transcript definition
 type Halo2Loader<'a> = loader::halo2::Halo2Loader<'a, G1Affine, BaseFieldEccChip>;
 /// Application snark transcript
@@ -86,7 +91,7 @@ pub fn aggregate<'a>(
     loader: &Rc<Halo2Loader<'a>>,
     snarks: &[SnarkWitness<Fr, G1Affine>],
     as_proof: Value<&'_ [u8]>,
-) -> Result<KzgAccumulator<G1Affine, Rc<Halo2Loader<'a>>>, plonk::Error> {
+) -> Result<(Vec<BaseFieldEccAssignedScalar<'a>>, KzgAccumulator<G1Affine, Rc<Halo2Loader<'a>>>), plonk::Error> {
     let assign_instances = |instances: &[Vec<Value<Fr>>]| {
         instances
             .iter()
@@ -100,6 +105,7 @@ pub fn aggregate<'a>(
     };
 
     let mut accumulators = vec![];
+    let mut previous_instances: Vec<Vec<BaseFieldEccAssignedScalar<'a>>> = Vec::with_capacity(snarks.len());
 
     for snark in snarks.iter() {
         let protocol = snark.protocol.as_ref().unwrap().loaded(loader);
@@ -110,11 +116,17 @@ pub fn aggregate<'a>(
         let mut accum = PlonkSuccinctVerifier::verify(svk, &protocol, &instances, &proof)
             .map_err(|_| plonk::Error::Synthesis)?;
         accumulators.append(&mut accum);
+        previous_instances.push(instances.into_iter().flatten().map(
+            |scalar| scalar.assigned().clone()
+        ).collect());
     }
     let accumulator = {
         let mut transcript = PoseidonTranscript::<Rc<Halo2Loader>, _>::new(loader, as_proof);
         let proof = As::read_proof(&Default::default(), &accumulators, &mut transcript).unwrap();
-        As::verify(&Default::default(), &accumulators, &proof).map_err(|_| plonk::Error::Synthesis)
+        match As::verify(&Default::default(), &accumulators, &proof).map_err(|_| plonk::Error::Synthesis) {
+            Ok(r) => Ok((previous_instances.into_iter().flatten().collect_vec(), r)),
+            Err(e) => Err(e)
+        }
     };
     accumulator
 }
@@ -180,6 +192,7 @@ impl AggregationCircuit {
         let snarks = snarks.into_iter().collect_vec();
 
         let mut accumulators = vec![];
+        let mut snark_ins: Vec<Fr> = vec![];
 
         for snark in snarks.iter() {
             trace!("Aggregating with snark instances {:?}", snark.instances);
@@ -199,6 +212,7 @@ impl AggregationCircuit {
             )
             .map_err(|_| AggregationError::ProofVerify)?;
             accumulators.append(&mut accum);
+            snark_ins.extend(snark.instances.iter().flatten());
         }
 
         trace!("Accumulator");
@@ -214,7 +228,11 @@ impl AggregationCircuit {
         let KzgAccumulator { lhs, rhs } = accumulator;
         let instances = [lhs.x, lhs.y, rhs.x, rhs.y]
             .map(fe_to_limbs::<_, _, LIMBS, BITS>)
-            .concat();
+            .concat()
+            .iter()
+            .cloned()
+            .chain(snark_ins.into_iter())
+            .collect();
 
         Ok(Self {
             svk,
@@ -230,8 +248,13 @@ impl AggregationCircuit {
     }
 
     /// Number of instance variables for the aggregation circuit, used in generating verifier.
-    pub fn num_instance() -> Vec<usize> {
-        vec![4 * LIMBS]
+    pub fn num_instance(&self) -> Vec<usize> {
+        let prev_num = self
+            .snarks
+            .iter()
+            .map(|snark| snark.instances.iter().map(|instance| instance.len()).sum::<usize>())
+            .sum::<usize>();
+        vec![4 * LIMBS + prev_num] 
     }
 
     /// Instance variables for the aggregation circuit, fed to verifier.
@@ -286,7 +309,7 @@ impl Circuit<Fr> for AggregationCircuit {
 
                 let ecc_chip = config.ecc_chip();
                 let loader = Halo2Loader::new(ecc_chip, ctx);
-                let accumulator = aggregate(&self.svk, &loader, &self.snarks, self.as_proof())?;
+                let (previous_instances, accumulator) = aggregate(&self.svk, &loader, &self.snarks, self.as_proof())?;
 
                 let accumulator_limbs = [accumulator.lhs, accumulator.rhs]
                     .iter()
@@ -297,7 +320,8 @@ impl Circuit<Fr> for AggregationCircuit {
                     })
                     .collect::<Result<Vec<_>, plonk::Error>>()?
                     .into_iter()
-                    .flatten();
+                    .flatten()
+                    .chain(previous_instances.into_iter());
 
                 Ok(accumulator_limbs)
             },
